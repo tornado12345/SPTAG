@@ -8,12 +8,15 @@
 #include "inc/Core/Common.h"
 #include "inc/Core/VectorIndex.h"
 
+typedef int SizeType;
+typedef int DimensionType;
+
 class AnnIndex
 {
 public:
-    AnnIndex(int p_dimension);
+    AnnIndex(DimensionType p_dimension);
 
-    AnnIndex(const char* p_algoType, const char* p_valueType, int p_dimension);
+    AnnIndex(const char* p_algoType, const char* p_valueType, DimensionType p_dimension);
 
     ~AnnIndex();
 
@@ -21,34 +24,40 @@ public:
 
     void SetSearchParam(const char* p_name, const char* p_value);
 
-    bool Build(ByteArray p_data, int p_num);
+    bool Build(ByteArray p_data, SizeType p_num);
 
-    bool BuildWithMetaData(ByteArray p_data, ByteArray p_meta, int p_num);
+    bool BuildWithMetaData(ByteArray p_data, ByteArray p_meta, SizeType p_num, bool p_withMetaIndex);
 
     std::shared_ptr<QueryResult> Search(ByteArray p_data, int p_resultNum);
 
     std::shared_ptr<QueryResult> SearchWithMetaData(ByteArray p_data, int p_resultNum);
 
+    std::shared_ptr<QueryResult> BatchSearch(ByteArray p_data, int p_vectorNum, int p_resultNum, bool p_withMetaData);
+
     bool ReadyToServe() const;
 
     bool Save(const char* p_saveFile) const;
 
-    bool Add(ByteArray p_data, int p_num);
+    bool Add(ByteArray p_data, SizeType p_num);
 
-    bool AddWithMetaData(ByteArray p_data, ByteArray p_meta, int p_num);
+    bool AddWithMetaData(ByteArray p_data, ByteArray p_meta, SizeType p_num);
 
-    bool Delete(ByteArray p_data, int p_num);
+    bool Delete(ByteArray p_data, SizeType p_num);
+
+    bool DeleteByMetaData(ByteArray p_meta);
 
     static AnnIndex Load(const char* p_loaderFile);
+
+    static AnnIndex Merge(const char* p_indexFilePath1, const char* p_indexFilePath2);
 
 private:
     AnnIndex(const std::shared_ptr<SPTAG::VectorIndex>& p_index);
     
     std::shared_ptr<SPTAG::VectorIndex> m_index;
 
-    int m_inputVectorSize;
+    size_t m_inputVectorSize;
     
-    int m_dimension;
+    DimensionType m_dimension;
 
     SPTAG::IndexAlgoType m_algoType;
 

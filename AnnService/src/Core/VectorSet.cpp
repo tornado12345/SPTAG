@@ -2,10 +2,8 @@
 // Licensed under the MIT License.
 
 #include "inc/Core/VectorSet.h"
-
+#include "inc/Core/Common/CommonUtils.h"
 using namespace SPTAG;
-
-#pragma warning(disable:4996)  // 'fopen': This function or variable may be unsafe. Consider using fopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
 
 VectorSet::VectorSet()
 {
@@ -19,7 +17,7 @@ VectorSet::~VectorSet()
 
 BasicVectorSet::BasicVectorSet(const ByteArray& p_bytesArray,
                                VectorValueType p_valueType,
-                               SizeType p_dimension,
+                               DimensionType p_dimension,
                                SizeType p_vectorCount)
     : m_data(p_bytesArray),
       m_valueType(p_valueType),
@@ -43,15 +41,14 @@ BasicVectorSet::GetValueType() const
 
 
 void*
-BasicVectorSet::GetVector(IndexType p_vectorID) const
+BasicVectorSet::GetVector(SizeType p_vectorID) const
 {
-    if (p_vectorID < 0 || static_cast<SizeType>(p_vectorID) >= m_vectorCount)
+    if (p_vectorID < 0 || p_vectorID >= m_vectorCount)
     {
         return nullptr;
     }
 
-    SizeType offset = static_cast<SizeType>(p_vectorID) * m_perVectorDataSize;
-    return reinterpret_cast<void*>(m_data.Data() + offset);
+    return reinterpret_cast<void*>(m_data.Data() + ((size_t)p_vectorID) * m_perVectorDataSize);
 }
 
 
@@ -61,7 +58,7 @@ BasicVectorSet::GetData() const
     return reinterpret_cast<void*>(m_data.Data());
 }
 
-SizeType
+DimensionType
 BasicVectorSet::Dimension() const
 {
     return m_dimension;
@@ -85,13 +82,35 @@ BasicVectorSet::Available() const
 ErrorCode 
 BasicVectorSet::Save(const std::string& p_vectorFile) const
 {
-    FILE * fp = fopen(p_vectorFile.c_str(), "wb");
-    if (fp == NULL) return ErrorCode::FailedOpenFile;
+    auto fp = SPTAG::f_createIO();
+    if (fp == nullptr || !fp->Initialize(p_vectorFile.c_str(), std::ios::binary | std::ios::out)) return ErrorCode::FailedOpenFile;
 
-    fwrite(&m_vectorCount, sizeof(int), 1, fp);
-    fwrite(&m_dimension, sizeof(int), 1, fp);
-
-    fwrite((const void*)(m_data.Data()), m_data.Length(), 1, fp);
-    fclose(fp);
+    IOBINARY(fp, WriteBinary, sizeof(SizeType), (char*)&m_vectorCount);
+    IOBINARY(fp, WriteBinary, sizeof(DimensionType), (char*)&m_dimension);
+    IOBINARY(fp, WriteBinary, m_data.Length(), (char*)m_data.Data());
     return ErrorCode::Success;
+}
+
+
+SizeType BasicVectorSet::PerVectorDataSize() const 
+{
+    return (SizeType)m_perVectorDataSize;
+}
+
+
+void
+BasicVectorSet::Normalize(int p_threads) 
+{
+    switch (m_valueType)
+    {
+#define DefineVectorValueType(Name, Type) \
+case SPTAG::VectorValueType::Name: \
+SPTAG::COMMON::Utils::BatchNormalize<Type>(reinterpret_cast<Type *>(m_data.Data()), m_vectorCount, m_dimension, SPTAG::COMMON::Utils::GetBase<Type>(), p_threads); \
+break; \
+
+#include "inc/Core/DefinitionList.h"
+#undef DefineVectorValueType
+    default:
+        break;
+    }
 }

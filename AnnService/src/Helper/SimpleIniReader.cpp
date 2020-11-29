@@ -4,8 +4,6 @@
 #include "inc/Helper/SimpleIniReader.h"
 #include "inc/Helper/CommonHelper.h"
 
-#include <iostream>
-#include <fstream>
 #include <cctype>
 #include <functional>
 
@@ -25,16 +23,9 @@ IniReader::~IniReader()
 }
 
 
-ErrorCode
-IniReader::LoadIniFile(const std::string& p_iniFilePath)
+ErrorCode IniReader::LoadIni(std::shared_ptr<Helper::DiskPriorityIO> p_input)
 {
-    std::ifstream input(p_iniFilePath);
-    if (!input.is_open())
-    {
-        return ErrorCode::FailedOpenFile;
-    }
-
-    const std::size_t c_bufferSize = 1 << 16;
+    std::size_t c_bufferSize = 1 << 16;
 
     std::unique_ptr<char[]> line(new char[c_bufferSize]);
 
@@ -51,12 +42,9 @@ IniReader::LoadIniFile(const std::string& p_iniFilePath)
         return std::isspace(p_ch) != 0;
     };
 
-    while (!input.eof())
+    while (true)
     {
-        if (!input.getline(line.get(), c_bufferSize))
-        {
-            break;
-        }
+        if (!p_input->ReadString(c_bufferSize, line)) break;
 
         std::size_t len = 0;
         while (len < c_bufferSize && line[len] != '\0')
@@ -141,8 +129,16 @@ IniReader::LoadIniFile(const std::string& p_iniFilePath)
             }
         }
     }
-
     return ErrorCode::Success;
+}
+
+
+ErrorCode
+IniReader::LoadIniFile(const std::string& p_iniFilePath)
+{
+    auto ptr = f_createIO();
+    if (ptr == nullptr || !ptr->Initialize(p_iniFilePath.c_str(), std::ios::in)) return ErrorCode::FailedOpenFile;
+    return LoadIni(ptr);
 }
 
 

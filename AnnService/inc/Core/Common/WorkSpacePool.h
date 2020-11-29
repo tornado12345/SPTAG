@@ -17,7 +17,7 @@ namespace COMMON
 class WorkSpacePool
 {
 public:
-    WorkSpacePool(int p_maxCheck, int p_vectorCount);
+    WorkSpacePool(int p_maxCheck, SizeType p_vectorCount, int p_hashExp);
 
     virtual ~WorkSpacePool();
 
@@ -27,6 +27,8 @@ public:
 
     void Init(int size);
 
+    inline int GetMaxCheck() const { return m_maxCheck; }
+
 private:
     std::list<std::shared_ptr<WorkSpace>> m_workSpacePool;
 
@@ -34,7 +36,9 @@ private:
 
     int m_maxCheck;
 
-    int m_vectorCount;
+    SizeType m_vectorCount;
+
+    int m_hashExp;
 };
 
 }

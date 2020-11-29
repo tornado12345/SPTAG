@@ -30,9 +30,12 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="packages.config" />
     <None Include="inc\PythonCore.i">
       <Filter>Resources</Filter>
     </None>
+    <None Include="inc\PythonCommon.i">
+      <Filter>Resources</Filter>
+    </None>
+    <None Include="packages.config" />
   </ItemGroup>
 </Project>

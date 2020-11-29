@@ -124,20 +124,20 @@ def testBuild(algo, distmethod, x, out):
     i = SPTAG.AnnIndex(algo, 'Float', x.shape[1])
     i.SetBuildParam("NumberOfThreads", '4')
     i.SetBuildParam("DistCalcMethod", distmethod)
-    ret = i.Build(x.tobytes(), x.shape[0])
-    i.Save(out)
+    if i.Build(x, x.shape[0]):
+        i.Save(out)
 
 def testBuildWithMetaData(algo, distmethod, x, s, out):
     i = SPTAG.AnnIndex(algo, 'Float', x.shape[1])
     i.SetBuildParam("NumberOfThreads", '4')
     i.SetBuildParam("DistCalcMethod", distmethod)
-    if i.BuildWithMetaData(x.tobytes(), s, x.shape[0]):
+    if i.BuildWithMetaData(x, s, x.shape[0], False):
         i.Save(out)
 
 def testSearch(index, q, k):
     j = SPTAG.AnnIndex.Load(index)
     for t in range(q.shape[0]):
-        result = j.Search(q[t].tobytes(), k)
+        result = j.Search(q[t], k)
         print (result[0]) # ids
         print (result[1]) # distances
 
@@ -145,7 +145,7 @@ def testSearchWithMetaData(index, q, k):
     j = SPTAG.AnnIndex.Load(index)
     j.SetSearchParam("MaxCheck", '1024')
     for t in range(q.shape[0]):
-        result = j.SearchWithMetaData(q[t].tobytes(), k)
+        result = j.SearchWithMetaData(q[t], k)
         print (result[0]) # ids
         print (result[1]) # distances
         print (result[2]) # metadata
@@ -157,7 +157,7 @@ def testAdd(index, x, out, algo, distmethod):
         i = SPTAG.AnnIndex(algo, 'Float', x.shape[1])
     i.SetBuildParam("NumberOfThreads", '4')
     i.SetBuildParam("DistCalcMethod", distmethod)
-    if i.Add(x.tobytes(), x.shape[0]):
+    if i.Add(x, x.shape[0]):
         i.Save(out)
 
 def testAddWithMetaData(index, x, s, out, algo, distmethod):
@@ -165,15 +165,14 @@ def testAddWithMetaData(index, x, s, out, algo, distmethod):
         i = SPTAG.AnnIndex.Load(index)
     else:
         i = SPTAG.AnnIndex(algo, 'Float', x.shape[1])
-    i = SPTAG.AnnIndex(algo, 'Float', x.shape[1])
     i.SetBuildParam("NumberOfThreads", '4')
     i.SetBuildParam("DistCalcMethod", distmethod)
-    if i.AddWithMetaData(x.tobytes(), s, x.shape[0]):
+    if i.AddWithMetaData(x, s, x.shape[0]):
         i.Save(out)
 
 def testDelete(index, x, out):
     i = SPTAG.AnnIndex.Load(index)
-    ret = i.Delete(x.tobytes(), x.shape[0])
+    ret = i.Delete(x, x.shape[0])
     print (ret)
     i.Save(out)
     
@@ -183,6 +182,8 @@ def Test(algo, distmethod):
     m = ''
     for i in range(n):
         m += str(i) + '\n'
+
+    m = m.encode()
 
     print ("Build.............................")
     testBuild(algo, distmethod, x, 'testindices')
@@ -196,8 +197,8 @@ def Test(algo, distmethod):
 
     print ("AddWithMetaData.............................")
     testAddWithMetaData(None, x, m, 'testindices', algo, distmethod)
-    print ("Delete.............................")
     testSearchWithMetaData('testindices', q, k)
+    print ("Delete.............................")
     testDelete('testindices', q, 'testindices')
     testSearchWithMetaData('testindices', q, k)
 
@@ -214,14 +215,14 @@ import numpy as np
 import time
 
 def testSPTAGClient():
-    index = SPTAGClient.AnnClient('127.0.0.1', '8100')
+    index = SPTAGClient.AnnClient('127.0.0.1', '8000')
     while not index.IsConnected():
         time.sleep(1)
     index.SetTimeoutMilliseconds(18000)
 
     q = np.ones((10, 10), dtype=np.float32)
     for t in range(q.shape[0]):
-        result = index.Search(q[t].tobytes(), 6, 'Float', False)
+        result = index.Search(q[t], 6, 'Float', False)
         print (result[0])
         print (result[1])
 
@@ -229,6 +230,56 @@ if __name__ == '__main__':
     testSPTAGClient()
 
  ```
-  
+ 
+ ### **C# Support**
+> Singlebox CsharpWrapper
+ ```C#
+using System;
+using System.Text;
+
+public class test
+{
+    static int dimension = 10;
+    static int n = 10;
+    static int k = 3;
+
+    static byte[] createFloatArray(int n)
+    {
+        byte[] data = new byte[n * dimension * sizeof(float)];
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < dimension; j++)
+                Array.Copy(BitConverter.GetBytes((float)i), 0, data, (i * dimension + j) * sizeof(float), 4);
+        return data;
+    }
+
+    static byte[] createMetadata(int n)
+    {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n; i++)
+            sb.Append(i.ToString() + '\n');
+        return Encoding.ASCII.GetBytes(sb.ToString());
+    }
+
+    static void Main()
+    {
+        {
+            AnnIndex idx = new AnnIndex("BKT", "Float", dimension);
+            idx.SetBuildParam("DistCalcMethod", "L2");
+            byte[] data = createFloatArray(n);
+            byte[] meta = createMetadata(n);
+            idx.BuildWithMetaData(data, meta, n, false);
+            idx.Save("testcsharp");
+        }
+
+        AnnIndex index = AnnIndex.Load("testcsharp");
+        BasicResult[] res = index.SearchWithMetaData(createFloatArray(1), k);
+        for (int i = 0; i < res.Length; i++)
+            Console.WriteLine("result " + i.ToString() + ":" + res[i].Dist.ToString() + "@(" + res[i].VID.ToString() + "," + Encoding.ASCII.GetString(res[i].Meta) + ")"); 
+        Console.WriteLine("test finish!");
+    }
+}
+
+ ```
+
   
   

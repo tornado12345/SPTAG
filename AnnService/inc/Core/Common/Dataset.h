@@ -4,8 +4,6 @@
 #ifndef _SPTAG_COMMON_DATASET_H_
 #define _SPTAG_COMMON_DATASET_H_
 
-#include <fstream>
-
 #if defined(_MSC_VER) || defined(__INTEL_COMPILER)
 #include <malloc.h>
 #else
@@ -17,8 +15,6 @@
 #define aligned_malloc(a, b) _mm_malloc(a, b)
 #define aligned_free(a) _mm_free(a)
 
-#pragma warning(disable:4996)  // 'fopen': This function or variable may be unsafe. Consider using fopen_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
-
 namespace SPTAG
 {
     namespace COMMON
@@ -28,23 +24,31 @@ namespace SPTAG
         class Dataset
         {
         private:
-            int rows;
-            int cols;
-            bool ownData = false;
+            std::string name = "Data";
+            SizeType rows = 0;
+            DimensionType cols = 1;
             T* data = nullptr;
-            std::vector<T> dataIncremental;
+            bool ownData = false;
+            SizeType incRows = 0;
+            std::vector<T*> incBlocks;
 
         public:
-            Dataset(): rows(0), cols(1) {}
-            Dataset(int rows_, int cols_, T* data_ = nullptr, bool transferOnwership_ = true)
+            SizeType rowsInBlock = 1024 * 1024;
+
+        public:
+            Dataset() {}
+
+            Dataset(SizeType rows_, DimensionType cols_, T* data_ = nullptr, bool transferOnwership_ = true)
             {
                 Initialize(rows_, cols_, data_, transferOnwership_);
             }
             ~Dataset()
             {
                 if (ownData) aligned_free(data);
+                for (T* ptr : incBlocks) aligned_free(ptr);
+                incBlocks.clear();
             }
-            void Initialize(int rows_, int cols_, T* data_ = nullptr, bool transferOnwership_ = true)
+            void Initialize(SizeType rows_, DimensionType cols_, T* data_ = nullptr, bool transferOnwership_ = true)
             {
                 rows = rows_;
                 cols = cols_;
@@ -52,138 +56,177 @@ namespace SPTAG
                 if (data_ == nullptr || !transferOnwership_)
                 {
                     ownData = true;
-                    data = (T*)aligned_malloc(sizeof(T) * rows * cols, ALIGN);
-                    if (data_ != nullptr) memcpy(data, data_, rows * cols * sizeof(T));
-                    else std::memset(data, -1, rows * cols * sizeof(T));
+                    data = (T*)aligned_malloc(((size_t)rows) * cols * sizeof(T), ALIGN);
+                    if (data_ != nullptr) memcpy(data, data_, ((size_t)rows) * cols * sizeof(T));
+                    else std::memset(data, -1, ((size_t)rows) * cols * sizeof(T));
                 }
+                incBlocks.reserve(MaxSize / rowsInBlock + 1);
             }
-            void SetR(int R_) 
+            void SetName(const std::string& name_) { name = name_; }
+            const std::string& Name() const { return name; }
+
+            void SetR(SizeType R_) 
             {
                 if (R_ >= rows)
-                    dataIncremental.resize((R_ - rows) * cols);
+                    incRows = R_ - rows;
                 else 
                 {
                     rows = R_;
-                    dataIncremental.clear();
+                    incRows = 0;
                 }
             }
-            inline int R() const { return (int)(rows + dataIncremental.size() / cols); }
-            inline int C() const { return cols; }
-            T* operator[](int index)
+            inline SizeType R() const { return rows + incRows; }
+            inline DimensionType C() const { return cols; }
+            inline std::uint64_t BufferSize() const { return sizeof(SizeType) + sizeof(DimensionType) + sizeof(T) * R() * C(); }
+
+            inline const T* At(SizeType index) const
             {
                 if (index >= rows) {
-                    return dataIncremental.data() + (size_t)(index - rows)*cols;
+                    SizeType incIndex = index - rows;
+                    return incBlocks[incIndex / rowsInBlock] + ((size_t)(incIndex % rowsInBlock)) * cols;
                 }
-                return data + (size_t)index*cols;
+                return data + ((size_t)index) * cols;
+            }
+
+            T* operator[](SizeType index)
+            {
+                return (T*)At(index);
             }
             
-            const T* operator[](int index) const
+            const T* operator[](SizeType index) const
             {
-                if (index >= rows) {
-                    return dataIncremental.data() + (size_t)(index - rows)*cols;
-                }
-                return data + (size_t)index*cols;
+                return At(index);
             }
 
-            void AddBatch(const T* pData, int num)
+            ErrorCode AddBatch(const T* pData, SizeType num)
             {
-                dataIncremental.insert(dataIncremental.end(), pData, pData + num*cols);
+                if (R() > MaxSize - num) return ErrorCode::MemoryOverFlow;
+
+                SizeType written = 0;
+                while (written < num) {
+                    SizeType curBlockIdx = (incRows + written) / rowsInBlock;
+                    if (curBlockIdx >= (SizeType)incBlocks.size()) {
+                        T* newBlock = (T*)aligned_malloc(((size_t)rowsInBlock) * cols * sizeof(T), ALIGN);
+                        if (newBlock == nullptr) return ErrorCode::MemoryOverFlow;
+                        incBlocks.push_back(newBlock);
+                    }
+                    SizeType curBlockPos = (incRows + written) % rowsInBlock;
+                    SizeType toWrite = min(rowsInBlock - curBlockPos, num - written);
+                    std::memcpy(incBlocks[curBlockIdx] + ((size_t)curBlockPos) * cols, pData + ((size_t)written) * cols, ((size_t)toWrite) * cols * sizeof(T));
+                    written += toWrite;
+                }
+                incRows += written;
+                return ErrorCode::Success;
             }
 
-            void AddBatch(int num)
+            ErrorCode AddBatch(SizeType num)
             {
-                dataIncremental.insert(dataIncremental.end(), (size_t)num*cols, T(-1));
+                if (R() > MaxSize - num) return ErrorCode::MemoryOverFlow;
+
+                SizeType written = 0;
+                while (written < num) {
+                    SizeType curBlockIdx = (incRows + written) / rowsInBlock;
+                    if (curBlockIdx >= (SizeType)incBlocks.size()) {
+                        T* newBlock = (T*)aligned_malloc(sizeof(T) * rowsInBlock * cols, ALIGN);
+                        if (newBlock == nullptr) return ErrorCode::MemoryOverFlow;
+                        std::memset(newBlock, -1, sizeof(T) * rowsInBlock * cols);
+                        incBlocks.push_back(newBlock);
+                    }
+                    written += min(rowsInBlock - ((incRows + written) % rowsInBlock), num - written);
+                }
+                incRows += written;
+                return ErrorCode::Success;
             }
 
-            bool Save(std::string sDataPointsFileName)
+            ErrorCode Save(std::shared_ptr<Helper::DiskPriorityIO> p_out) const
             {
-                std::cout << "Save Data To " << sDataPointsFileName << std::endl;
-                FILE * fp = fopen(sDataPointsFileName.c_str(), "wb");
-                if (fp == NULL) return false;
+                SizeType CR = R();
+                IOBINARY(p_out, WriteBinary, sizeof(SizeType), (char*)&CR);
+                IOBINARY(p_out, WriteBinary, sizeof(DimensionType), (char*)&cols);
+                IOBINARY(p_out, WriteBinary, sizeof(T) * cols * rows, (char*)data);
+                
+                SizeType blocks = incRows / rowsInBlock;
+                for (int i = 0; i < blocks; i++)
+                    IOBINARY(p_out, WriteBinary, sizeof(T) * cols * rowsInBlock, (char*)incBlocks[i]);
 
-                int CR = R();
-                fwrite(&CR, sizeof(int), 1, fp);
-                fwrite(&cols, sizeof(int), 1, fp);
-
-                T* ptr = data;
-                int toWrite = rows;
-                while (toWrite > 0) 
-                {
-                    size_t write = fwrite(ptr, sizeof(T) * cols, toWrite, fp);
-                    ptr += write * cols;
-                    toWrite -= (int)write;
-                }
-                ptr = dataIncremental.data();
-                toWrite = CR - rows;
-                while (toWrite > 0)
-                {
-                    size_t write = fwrite(ptr, sizeof(T) * cols, toWrite, fp);
-                    ptr += write * cols;
-                    toWrite -= (int)write;
-                }
-                fclose(fp);
-
-                std::cout << "Save Data (" << CR << ", " << cols << ") Finish!" << std::endl;
-                return true;
+                SizeType remain = incRows % rowsInBlock;
+                if (remain > 0) IOBINARY(p_out, WriteBinary, sizeof(T) * cols * remain, (char*)incBlocks[blocks]);
+                LOG(Helper::LogLevel::LL_Info, "Save %s (%d,%d) Finish!\n", name.c_str(), CR, cols);
+                return ErrorCode::Success;
             }
 
-            bool Load(std::string sDataPointsFileName)
+            ErrorCode Save(std::string sDataPointsFileName) const
             {
-                std::cout << "Load Data From " << sDataPointsFileName << std::endl;
-                FILE * fp = fopen(sDataPointsFileName.c_str(), "rb");
-                if (fp == NULL) return false;
+                LOG(Helper::LogLevel::LL_Info, "Save %s To %s\n", name.c_str(), sDataPointsFileName.c_str());
+                auto ptr = f_createIO();
+                if (ptr == nullptr || !ptr->Initialize(sDataPointsFileName.c_str(), std::ios::binary | std::ios::out)) return ErrorCode::FailedCreateFile;
+                return Save(ptr);
+            }
 
-                int R, C;
-                fread(&R, sizeof(int), 1, fp);
-                fread(&C, sizeof(int), 1, fp);
+            ErrorCode Load(std::shared_ptr<Helper::DiskPriorityIO> p_input)
+            {
+                IOBINARY(p_input, ReadBinary, sizeof(SizeType), (char*)&rows);
+                IOBINARY(p_input, ReadBinary, sizeof(DimensionType), (char*)&cols);
 
-                Initialize(R, C);
-                T* ptr = data;
-                while (R > 0) {
-                    size_t read = fread(ptr, sizeof(T) * C, R, fp);
-                    ptr += read * C;
-                    R -= (int)read;
-                }
-                fclose(fp);
-                std::cout << "Load Data (" << rows << ", " << cols << ") Finish!" << std::endl;
-                return true;
+                Initialize(rows, cols);
+                IOBINARY(p_input, ReadBinary, sizeof(T) * cols * rows, (char*)data);
+                LOG(Helper::LogLevel::LL_Info, "Load %s (%d,%d) Finish!\n", name.c_str(), rows, cols);
+                return ErrorCode::Success;
+            }
+
+            ErrorCode Load(std::string sDataPointsFileName)
+            {
+                LOG(Helper::LogLevel::LL_Info, "Load %s From %s\n", name.c_str(), sDataPointsFileName.c_str());
+                auto ptr = f_createIO();
+                if (ptr == nullptr || !ptr->Initialize(sDataPointsFileName.c_str(), std::ios::binary | std::ios::in)) return ErrorCode::FailedOpenFile;
+                return Load(ptr);
             }
 
             // Functions for loading models from memory mapped files
-            bool Load(char* pDataPointsMemFile)
+            ErrorCode Load(char* pDataPointsMemFile)
             {
-                int R, C;
-                R = *((int*)pDataPointsMemFile);
-                pDataPointsMemFile += sizeof(int);
+                SizeType R;
+                DimensionType C;
+                R = *((SizeType*)pDataPointsMemFile);
+                pDataPointsMemFile += sizeof(SizeType);
 
-                C = *((int*)pDataPointsMemFile);
-                pDataPointsMemFile += sizeof(int);
+                C = *((DimensionType*)pDataPointsMemFile);
+                pDataPointsMemFile += sizeof(DimensionType);
 
                 Initialize(R, C, (T*)pDataPointsMemFile);
-                return true;
+                LOG(Helper::LogLevel::LL_Info, "Load %s (%d,%d) Finish!\n", name.c_str(), R, C);
+                return ErrorCode::Success;
             }
 
-            bool Refine(const std::vector<int>& indices, std::string sDataPointsFileName)
+            ErrorCode Refine(const std::vector<SizeType>& indices, Dataset<T>& data) const
             {
-                std::cout << "Save Refine Data To " << sDataPointsFileName << std::endl;
-                FILE * fp = fopen(sDataPointsFileName.c_str(), "wb");
-                if (fp == NULL) return false;
-
-                int R = (int)(indices.size());
-                fwrite(&R, sizeof(int), 1, fp);
-                fwrite(&cols, sizeof(int), 1, fp);
-
-                // write point one by one in case for cache miss
-                for (int i = 0; i < R; i++) {
-                    if (indices[i] < rows)
-                        fwrite(data + (size_t)indices[i] * cols, sizeof(T) * cols, 1, fp);
-                    else
-                        fwrite(dataIncremental.data() + (size_t)(indices[i] - rows) * cols, sizeof(T) * cols, 1, fp);
+                SizeType R = (SizeType)(indices.size());
+                data.Initialize(R, cols);
+                for (SizeType i = 0; i < R; i++) {
+                    std::memcpy((void*)data.At(i), (void*)this->At(indices[i]), sizeof(T) * cols);
                 }
-                fclose(fp);
+                return ErrorCode::Success;
+            }
 
-                std::cout << "Save Refine Data (" << R << ", " << cols << ") Finish!" << std::endl;
-                return true;
+            ErrorCode Refine(const std::vector<SizeType>& indices, std::shared_ptr<Helper::DiskPriorityIO> output) const
+            {
+                SizeType R = (SizeType)(indices.size());
+                IOBINARY(output, WriteBinary, sizeof(SizeType), (char*)&R);
+                IOBINARY(output, WriteBinary, sizeof(DimensionType), (char*)&cols);
+
+                for (SizeType i = 0; i < R; i++) {
+                    IOBINARY(output, WriteBinary, sizeof(T) * cols, (char*)At(indices[i]));
+                }
+                LOG(Helper::LogLevel::LL_Info, "Save Refine %s (%d,%d) Finish!\n", name.c_str(), R, cols);
+                return ErrorCode::Success;
+            }
+
+            ErrorCode Refine(const std::vector<SizeType>& indices, std::string sDataPointsFileName) const
+            {
+                LOG(Helper::LogLevel::LL_Info, "Save Refine %s To %s\n", name.c_str(), sDataPointsFileName.c_str());
+                auto ptr = f_createIO();
+                if (ptr == nullptr || !ptr->Initialize(sDataPointsFileName.c_str(), std::ios::binary | std::ios::out)) return ErrorCode::FailedCreateFile;
+                return Refine(indices, ptr);
             }
         };
     }

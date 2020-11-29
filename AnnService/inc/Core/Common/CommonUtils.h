@@ -8,8 +8,6 @@
 
 #include <unordered_map>
 
-#include <fstream>
-#include <iostream>
 #include <exception>
 #include <algorithm>
 
@@ -26,6 +24,7 @@
 #include <cstring>
 
 #define InterlockedCompareExchange(a,b,c) __sync_val_compare_and_swap(a, c, b)
+#define InterlockedExchange8(a,b) __sync_lock_test_and_set(a, b)
 #define Sleep(a) usleep(a * 1000)
 #define strtok_s(a, b, c) strtok_r(a, b, c)
 #endif
@@ -36,9 +35,9 @@ namespace SPTAG
     {
         class Utils {
         public:
-            static int rand_int(int high = RAND_MAX, int low = 0)   // Generates a random int value.
+            static SizeType rand(SizeType high = MaxSize, SizeType low = 0)   // Generates a random int value.
             {
-                return low + (int)(float(high - low)*(std::rand() / (RAND_MAX + 1.0)));
+                return low + (SizeType)(float(high - low)*(std::rand() / (RAND_MAX + 1.0)));
             }
 
             static inline float atomic_float_add(volatile float* ptr, const float operand)
@@ -61,86 +60,6 @@ namespace SPTAG
                 }
             }
 
-            static double GetVector(char* cstr, const char* sep, std::vector<float>& arr, int& NumDim) {
-                char* current;
-                char* context = NULL;
-
-                int i = 0;
-                double sum = 0;
-                arr.clear();
-                current = strtok_s(cstr, sep, &context);
-                while (current != NULL && (i < NumDim || NumDim < 0)) {
-                    try {
-                        float val = (float)atof(current);
-                        arr.push_back(val);
-                    }
-                    catch (std::exception e) {
-                        std::cout << "Exception:" << e.what() << std::endl;
-                        return -2;
-                    }
-
-                    sum += arr[i] * arr[i];
-                    current = strtok_s(NULL, sep, &context);
-                    i++;
-                }
-
-                if (NumDim < 0) NumDim = i;
-                if (i < NumDim) return -2;
-                return std::sqrt(sum);
-            }
-
-            template <typename T>
-            static void Normalize(T* arr, int col, int base) {
-                double vecLen = 0;
-                for (int j = 0; j < col; j++) {
-                    double val = arr[j];
-                    vecLen += val * val;
-                }
-                vecLen = std::sqrt(vecLen);
-                if (vecLen < 1e-6) {
-                    T val = (T)(1.0 / std::sqrt((double)col) * base);
-                    for (int j = 0; j < col; j++) arr[j] = val;
-                }
-                else {
-                    for (int j = 0; j < col; j++) arr[j] = (T)(arr[j] / vecLen * base);
-                }
-            }
-
-            static size_t ProcessLine(std::string& currentLine, std::vector<float>& arr, int& D, int base, DistCalcMethod distCalcMethod) {
-                size_t index;
-                double vecLen;
-                if (currentLine.length() == 0 || (index = currentLine.find_last_of("\t")) == std::string::npos || (vecLen = GetVector(const_cast<char*>(currentLine.c_str() + index + 1), "|", arr, D)) < -1) {
-                    std::cout << "Parse vector error: " + currentLine << std::endl;
-                    //throw MyException("Error in parsing data " + currentLine);
-                    return -1;
-                }
-                if (distCalcMethod == DistCalcMethod::Cosine) {
-                    Normalize(arr.data(), D, base);
-                }
-                return index;
-            }
-
-            template <typename T>
-            static void PrepareQuerys(std::ifstream& inStream, std::vector<std::string>& qString, std::vector<std::vector<T>>& Query, int& NumQuery, int& NumDim, DistCalcMethod distCalcMethod, int base) {
-                std::string currentLine;
-                std::vector<float> arr;
-                int i = 0;
-                size_t index;
-                while ((NumQuery < 0 || i < NumQuery) && !inStream.eof()) {
-                    std::getline(inStream, currentLine);
-                    if (currentLine.length() <= 1 || (index = ProcessLine(currentLine, arr, NumDim, base, distCalcMethod)) < 0) {
-                        continue;
-                    }
-                    qString.push_back(currentLine.substr(0, index));
-                    if (Query.size() < i + 1) Query.push_back(std::vector<T>(NumDim, 0));
-
-                    for (int j = 0; j < NumDim; j++) Query[i][j] = (T)arr[j];
-                    i++;
-                }
-                NumQuery = i;
-                std::cout << "Load data: (" << NumQuery << ", " << NumDim << ")" << std::endl;
-            }
-
             template<typename T>
             static inline int GetBase() {
                 if (GetEnumValueType<T>() != VectorValueType::Float) {
@@ -149,12 +68,38 @@ namespace SPTAG
                 return 1;
             }
 
-            static inline void AddNeighbor(int idx, float dist, int *neighbors, float *dists, int size)
+            template <typename T>
+            static void Normalize(T* arr, DimensionType col, int base) {
+                double vecLen = 0;
+                for (DimensionType j = 0; j < col; j++) {
+                    double val = arr[j];
+                    vecLen += val * val;
+                }
+                vecLen = std::sqrt(vecLen);
+                if (vecLen < 1e-6) {
+                    T val = (T)(1.0 / std::sqrt((double)col) * base);
+                    for (DimensionType j = 0; j < col; j++) arr[j] = val;
+                }
+                else {
+                    for (DimensionType j = 0; j < col; j++) arr[j] = (T)(arr[j] / vecLen * base);
+                }
+            }
+
+            template <typename T>
+            static void BatchNormalize(T* data, SizeType row, DimensionType col, int base, int threads) {
+#pragma omp parallel for num_threads(threads)
+                for (SizeType i = 0; i < row; i++)
+                {
+                    SPTAG::COMMON::Utils::Normalize(data + i * (size_t)col, col, base);
+                }
+            }
+
+            static inline void AddNeighbor(SizeType idx, float dist, SizeType *neighbors, float *dists, DimensionType size)
             {
                 size--;
                 if (dist < dists[size] || (dist == dists[size] && idx < neighbors[size]))
                 {
-                    int nb;
+                    DimensionType nb;
                     for (nb = 0; nb <= size && neighbors[nb] != idx; nb++);
 
                     if (nb > size)

@@ -6,9 +6,6 @@
 
 #include "CommonDataStructure.h"
 
-#include <iostream>
-#include <fstream>
-
 namespace SPTAG
 {
 
@@ -19,19 +16,29 @@ public:
 
     virtual ~MetadataSet();
 
-    virtual ByteArray GetMetadata(IndexType p_vectorID) const = 0;
+    virtual ByteArray GetMetadata(SizeType p_vectorID) const = 0;
+
+    virtual ByteArray GetMetadataCopy(SizeType p_vectorID) const = 0;
 
     virtual SizeType Count() const = 0;
 
     virtual bool Available() const = 0;
 
-    virtual void AddBatch(MetadataSet& data) = 0;
+    virtual std::pair<std::uint64_t, std::uint64_t> BufferSize() const = 0;
+
+    virtual void Add(const ByteArray& data) = 0;
+
+    virtual ErrorCode SaveMetadata(std::shared_ptr<Helper::DiskPriorityIO> p_metaOut, std::shared_ptr<Helper::DiskPriorityIO> p_metaIndexOut) = 0;
 
     virtual ErrorCode SaveMetadata(const std::string& p_metaFile, const std::string& p_metaindexFile) = 0;
+ 
+    virtual void AddBatch(MetadataSet& data);
+    
+    virtual ErrorCode RefineMetadata(std::vector<SizeType>& indices, std::shared_ptr<MetadataSet>& p_newMetadata) const;
 
-    virtual ErrorCode RefineMetadata(std::vector<int>& indices, const std::string& p_folderPath);
+    virtual ErrorCode RefineMetadata(std::vector<SizeType>& indices, std::shared_ptr<Helper::DiskPriorityIO> p_metaOut, std::shared_ptr<Helper::DiskPriorityIO> p_metaIndexOut) const;
 
-    static ErrorCode MetaCopy(const std::string& p_src, const std::string& p_dst);
+    virtual ErrorCode RefineMetadata(std::vector<SizeType>& indices, const std::string& p_metaFile, const std::string& p_metaindexFile) const;
 };
 
 
@@ -42,18 +49,24 @@ public:
     
     ~FileMetadataSet();
 
-    ByteArray GetMetadata(IndexType p_vectorID) const;
+    ByteArray GetMetadata(SizeType p_vectorID) const;
+
+    ByteArray GetMetadataCopy(SizeType p_vectorID) const;
 
     SizeType Count() const;
 
     bool Available() const;
 
-    void AddBatch(MetadataSet& data);
+    std::pair<std::uint64_t, std::uint64_t> BufferSize() const;
+    
+    void Add(const ByteArray& data);
+
+    ErrorCode SaveMetadata(std::shared_ptr<Helper::DiskPriorityIO> p_metaOut, std::shared_ptr<Helper::DiskPriorityIO> p_metaIndexOut);
 
     ErrorCode SaveMetadata(const std::string& p_metaFile, const std::string& p_metaindexFile);
 
 private:
-    std::ifstream* m_fp = nullptr;
+    std::shared_ptr<Helper::DiskPriorityIO> m_fp = nullptr;
 
     std::vector<std::uint64_t> m_pOffsets;
 
@@ -70,30 +83,44 @@ private:
 class MemMetadataSet : public MetadataSet
 {
 public:
+    MemMetadataSet();
+
     MemMetadataSet(ByteArray p_metadata, ByteArray p_offsets, SizeType p_count);
+
+    MemMetadataSet(const std::string& p_metafile, const std::string& p_metaindexfile);
+
+    MemMetadataSet(std::shared_ptr<Helper::DiskPriorityIO> p_metain, std::shared_ptr<Helper::DiskPriorityIO> p_metaindexin);
 
     ~MemMetadataSet();
 
-    ByteArray GetMetadata(IndexType p_vectorID) const;
+    ByteArray GetMetadata(SizeType p_vectorID) const;
+    
+    ByteArray GetMetadataCopy(SizeType p_vectorID) const;
 
     SizeType Count() const;
 
     bool Available() const;
 
-    void AddBatch(MetadataSet& data);
+    std::pair<std::uint64_t, std::uint64_t> BufferSize() const;
+
+    void Add(const ByteArray& data);
+
+    ErrorCode SaveMetadata(std::shared_ptr<Helper::DiskPriorityIO> p_metaOut, std::shared_ptr<Helper::DiskPriorityIO> p_metaIndexOut);
 
     ErrorCode SaveMetadata(const std::string& p_metaFile, const std::string& p_metaindexFile);
 
 private:
+    ErrorCode Init(std::shared_ptr<Helper::DiskPriorityIO> p_metain, std::shared_ptr<Helper::DiskPriorityIO> p_metaindexin);
+
     std::vector<std::uint64_t> m_offsets;
 
     SizeType m_count;
 
     ByteArray m_metadataHolder;
 
-    ByteArray m_offsetHolder;
-
     std::vector<std::uint8_t> m_newdata;
+
+    std::shared_ptr<void> m_lock;
 };
 
 

@@ -4,6 +4,7 @@
 #ifndef _SPTAG_COMMON_FINEGRAINEDLOCK_H_
 #define _SPTAG_COMMON_FINEGRAINEDLOCK_H_
 
+#include <shared_mutex>
 #include <vector>
 #include <mutex>
 #include <memory>
@@ -14,36 +15,28 @@ namespace SPTAG
     {
         class FineGrainedLock {
         public:
-            FineGrainedLock() {}
-            ~FineGrainedLock() { 
-                for (int i = 0; i < locks.size(); i++)
-                    locks[i].reset();
-                locks.clear();
+            FineGrainedLock() {
+                m_locks.reset(new std::mutex[PoolSize + 1]);
             }
-            
-            void resize(int n) {
-                int current = (int)locks.size();
-                if (current <= n) {
-                    locks.resize(n);
-                    for (int i = current; i < n; i++)
-                        locks[i].reset(new std::mutex);
-                }
-                else {
-                    for (int i = n; i < current; i++)
-                        locks[i].reset();
-                    locks.resize(n);
-                }
+            ~FineGrainedLock() {}
+
+            std::mutex& operator[](SizeType idx) {
+                unsigned index = hash_func((unsigned)idx);
+                return m_locks[index];
             }
 
-            std::mutex& operator[](int idx) {
-                return *locks[idx];
-            }
-
-            const std::mutex& operator[](int idx) const {
-                return *locks[idx];
+            const std::mutex& operator[](SizeType idx) const {
+                unsigned index = hash_func((unsigned)idx);
+                return m_locks[index];
             }
         private:
-            std::vector<std::shared_ptr<std::mutex>> locks;
+            static const int PoolSize = 16383;
+            std::unique_ptr<std::mutex[]> m_locks;
+
+            inline unsigned hash_func(unsigned idx) const
+            {
+                return ((unsigned)(idx * 99991) + _rotl(idx, 2) + 101) & PoolSize;
+            }
         };
     }
 }

@@ -5,6 +5,7 @@
 #define _SPTAG_COMMON_QUERYRESULTSET_H_
 
 #include "../SearchQuery.h"
+#include <algorithm>
 
 namespace SPTAG
 {
@@ -51,7 +52,7 @@ public:
         return m_results[0].Dist;
     }
 
-    bool AddPoint(const int index, float dist)
+    bool AddPoint(const SizeType index, float dist)
     {
         if (dist < m_results[0].Dist || (dist == m_results[0].Dist && index < m_results[0].VID))
         {
@@ -70,6 +71,11 @@ public:
             std::swap(m_results[0], m_results[i]);
             Heapify(i);
         }
+    }
+
+    void Reverse()
+    {
+        std::reverse(m_results.Data(), m_results.Data() + m_resultNum);
     }
 
 private:

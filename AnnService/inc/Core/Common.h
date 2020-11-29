@@ -11,6 +11,8 @@
 #include <limits>
 #include <vector>
 #include <cmath>
+#include "inc/Helper/Logging.h"
+#include "inc/Helper/DiskIO.h"
 
 #ifndef _MSC_VER
 #include <sys/stat.h>
@@ -56,12 +58,22 @@ inline bool fileexists(const char* path) {
 
 namespace SPTAG
 {
+typedef std::int32_t SizeType;
+typedef std::int32_t DimensionType;
 
-typedef std::uint32_t SizeType;
-
+const SizeType MaxSize = (std::numeric_limits<SizeType>::max)();
 const float MinDist = (std::numeric_limits<float>::min)();
 const float MaxDist = (std::numeric_limits<float>::max)();
 const float Epsilon = 0.000000001f;
+
+extern std::shared_ptr<Helper::DiskPriorityIO>(*f_createIO)();
+
+#define IOBINARY(ptr, func, bytes, ...) if (ptr->func(bytes, __VA_ARGS__) != bytes) return ErrorCode::DiskIOFail
+#define IOSTRING(ptr, func, ...) if (ptr->func(__VA_ARGS__) == 0) return ErrorCode::DiskIOFail
+
+extern std::unique_ptr<Helper::Logger> g_pLogger;
+
+#define LOG(l, ...) g_pLogger->Logging("SPTAG", l, __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__)
 
 class MyException : public std::exception 
 {
@@ -75,11 +87,6 @@ public:
     const char* what() const noexcept { return Exp.c_str(); }
 #endif
 };
-
-// Type of number index.
-typedef std::int32_t IndexType;
-static_assert(std::is_integral<IndexType>::value, "IndexType must be integral type.");
-
 
 enum class ErrorCode : std::uint16_t
 {
@@ -124,6 +131,25 @@ enum class IndexAlgoType : std::uint8_t
 };
 static_assert(static_cast<std::uint8_t>(IndexAlgoType::Undefined) != 0, "Empty IndexAlgoType!");
 
+enum class VectorFileType : std::uint8_t
+{
+#define DefineVectorFileType(Name) Name,
+#include "DefinitionList.h"
+#undef DefineVectorFileType
+
+    Undefined
+};
+static_assert(static_cast<std::uint8_t>(VectorFileType::Undefined) != 0, "Empty VectorFileType!");
+
+enum class TruthFileType : std::uint8_t
+{
+#define DefineTruthFileType(Name) Name,
+#include "DefinitionList.h"
+#undef DefineTruthFileType
+
+    Undefined
+};
+static_assert(static_cast<std::uint8_t>(TruthFileType::Undefined) != 0, "Empty TruthFileType!");
 
 template<typename T>
 constexpr VectorValueType GetEnumValueType()
